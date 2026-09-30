@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ALER: Adaptive Learnable Experience Rewriting for Reinforcement Learning</title>
+<style>
+  :root { --fg:#1d1d1f; --muted:#5f6368; --accent:#1a5fb4; --line:#e3e3e3; --bg2:#f6f7f9; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:17px/1.6 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color:var(--fg); }
+  main { max-width:960px; margin:0 auto; padding:0 20px 60px; }
+  header { text-align:center; padding:48px 0 16px; }
+  h1 { font-size:2.1em; line-height:1.2; margin:0 0 12px; }
+  h2 { font-size:1.45em; margin:48px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+  h3 { font-size:1.1em; margin:28px 0 8px; }
+  .authors { color:var(--muted); margin:4px 0; }
+  .tldr { background:var(--bg2); border-left:4px solid var(--accent); padding:14px 18px; border-radius:4px; }
+  figure { margin:20px 0; text-align:center; }
+  figure img { max-width:100%; height:auto; }
+  .video video { width:100%; border-radius:8px; background:#000; }
+  figcaption { color:var(--muted); font-size:0.9em; margin-top:6px; text-align:left; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
+  @media (max-width:760px) { .grid2 { grid-template-columns:1fr; } h1 { font-size:1.6em; } }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; margin:12px auto; font-size:0.88em; }
+  th, td { padding:5px 9px; border-bottom:1px solid var(--line); text-align:center; white-space:nowrap; }
+  th { border-bottom:2px solid var(--fg); }
+  td:first-child, th:first-child { text-align:left; }
+  .wide { font-size:0.8em; } .wide th, .wide td { padding:5px 6px; } .wide td:first-child { white-space:normal; min-width:120px; }
+  .best { font-weight:700; }
+  .aler { background:#eaf2fc; }
+  .runes td:first-child { width:44px; }
+  .runes img { height:28px; vertical-align:middle; }
+  .runes td { white-space:normal; text-align:left; }
+  code { font-size:0.92em; }
+  pre { background:var(--bg2); padding:14px; border-radius:6px; overflow-x:auto; font-size:0.85em; }
+  footer { color:var(--muted); font-size:0.85em; text-align:center; margin-top:48px; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>ALER: Adaptive Learnable Experience Rewriting<br>for Reinforcement Learning</h1>
+  <p class="authors">Oleg Shchendrigin, Egor Cherepanov, Alexey K. Kovalev, Aleksandr I. Panov</p>
+  <p class="authors">Under review at ICLR 2027</p>
+</header>
+
+<figure class="video">
+  <video src="assets/aler_video.mp4" autoplay muted loop playsinline controls preload="auto"></video>
+</figure>
+
+<p class="tldr"><b>TL;DR.</b> In partially observable RL, a later observation can make stored information obsolete or change what it implies for the next decision. We formalize rewriting and experience fusion next to retention, introduce the Rune Mazes environments that test them, and propose ALER, an agent that pairs an LSTM with an independently addressed slot memory and a learned fusion gate.</p>
+
+<h2>Three memory updates</h2>
+<p>Consider a T-Maze in which the agent sees a cue at the start of a corridor and must turn toward the side it indicates at the junction. If a later corridor shows a new cue, the old cue becomes obsolete and the agent has to rewrite it. If the corridor contains a rune that inverts the cue, the agent has to turn the other way, which it can do only if it still holds the cue and applies the inversion. Each observation therefore maps the decision-relevant content to itself, to a new value, or to a different function of it.</p>
+<div class="scroll">
+<table>
+  <tr><th>Update</th><th>What the observation does to the target</th><th>Example</th></tr>
+  <tr><td>Retention</td><td>keeps it unchanged</td><td>corridor step, <code>NoOp</code> rune</td></tr>
+  <tr><td>Rewriting</td><td>sets it to a value independent of the old one</td><td>new cue in Endless T-Maze</td></tr>
+  <tr><td>Experience fusion</td><td>transforms it by a rule that the observation specifies</td><td><code>Invert</code> rune</td></tr>
+</table>
+</div>
+<p>For tasks composed of such updates, we count the memory states that a solution needs. The count separates an online solution, which folds every rune into the stored cue, from a deferred solution, which keeps the cue unchanged and tracks the runes apart from it. Several baselines reach their lowest success rates on the compositions that need more states.</p>
+
+<h2>Method</h2>
+<figure>
+  <img src="assets/architecture.png" alt="ALER architecture">
+  <figcaption><b>ALER architecture.</b> The shared LSTM state h<sub>t</sub> queries the episodic memory (Read), a learned gate combines the retrieved vector r<sub>t</sub> with h<sub>t</sub> into z<sub>t</sub> for the actor and the critic (Fusion), and an independently addressed Gumbel-Softmax write stores the write candidate x<sub>t</sub> (Write). PPO trains all parts jointly.</figcaption>
+</figure>
+<ul>
+  <li><b>Retention.</b> The LSTM processes every observation and tracks quantities that change at every step. A slot keeps its content while later writes put little total weight on it.</li>
+  <li><b>Rewriting.</b> An independently addressed Gumbel-Softmax write that concentrates its weight on one slot overwrites that slot in one step.</li>
+  <li><b>Fusion.</b> A learned gate g<sub>t</sub> combines the retrieved vector r<sub>t</sub> with the recurrent state h<sub>t</sub> into z<sub>t</sub> = g<sub>t</sub> ⊙ r<sub>t</sub> + (1 − g<sub>t</sub>) ⊙ h<sub>t</sub>, which feeds the actor and the critic.</li>
+</ul>
+
+<h2>Environments</h2>
+<p>Rune Mazes are three environments in which rune observations invert, cancel, reset, or repeat updates of a hidden cue. Together with Endless T-Maze, in which each of n consecutive corridors shows a new cue, they cover all three update classes under vector and pixel observations.</p>
+<figure>
+  <img src="assets/rune_mazes.png" alt="Rune Multi-Corridor and Rune T-Maze">
+  <figcaption><b>Vector Rune Mazes.</b> Left: Rune Multi-Corridor, in which a multi-bit cue indicates one of K ∈ {4, 8, 16} branches and an <code>Invert</code> rune changes it. Right: Rune T-Maze, in which the agent must invert the initial cue after an <code>Invert</code> rune and ignore a <code>NoOp</code> rune.</figcaption>
+</figure>
+<figure>
+  <img src="assets/minigrid_rollout.png" alt="Rune MiniGrid Memory rollout">
+  <figcaption><b>Rune MiniGrid Memory.</b> One pixel-based episode with <code>RepeatPrev</code> + <code>SkipNext</code> + <code>Invert</code>, from the cue room (left) to the junction (right). Each rune fires once on contact.</figcaption>
+</figure>
+<div class="grid2">
+  <figure>
+    <img src="assets/endless_tmaze.png" alt="Endless T-Maze">
+    <figcaption><b>Endless T-Maze.</b> Every further corridor shows a new cue and requires one rewrite.</figcaption>
+  </figure>
+  <div class="scroll">
+  <table class="runes">
+    <tr><td><img src="assets/rune_invert.png" alt=""></td><td><code>Invert</code> swaps the success and failure targets.</td></tr>
+    <tr><td><img src="assets/rune_skipnext.png" alt=""></td><td><code>SkipNext</code> cancels the next rune.</td></tr>
+    <tr><td><img src="assets/rune_resetrules.png" alt=""></td><td><code>ResetRules</code> restores the original targets.</td></tr>
+    <tr><td><img src="assets/rune_repeatprevious.png" alt=""></td><td><code>RepeatPrev</code> re-applies the last rune that took effect.</td></tr>
+    <tr><td><img src="assets/rune_noop.png" alt=""></td><td><code>NoOp</code> leaves the rules unchanged.</td></tr>
+  </table>
+  </div>
+</div>
+
+<h2>Results</h2>
+<p>We compare ALER with seven baselines: PPO-MLP, PPO-LSTM, GTrXL, S5, FFM, SHM, and DNC. ALER reaches a success rate of at least 0.82 in all sixteen Endless T-Maze configurations and at least 0.99 on all five Rune T-Maze compositions, and it leads PPO-LSTM in eight of ten Rune MiniGrid Memory configurations.</p>
+
+<h3>Rune T-Maze</h3>
+<div class="scroll">
+<table class="wide">
+  <tr><th>Composition</th><th>Q*</th><th>PPO-MLP</th><th>PPO-LSTM</th><th>GTrXL</th><th>S5</th><th>FFM</th><th>SHM</th><th>DNC</th><th class="aler">ALER</th></tr>
+  <tr><td>Invert</td><td>2</td><td>0.42±0.11</td><td>0.84±0.04</td><td class="best">1.00±0.00</td><td class="best">1.00±0.00</td><td class="best">1.00±0.00</td><td>0.72±0.09</td><td class="best">1.00±0.00</td><td class="aler best">1.00±0.00</td></tr>
+  <tr><td>NoOp + Invert</td><td>2</td><td>0.51±0.00</td><td>0.78±0.00</td><td class="best">1.00±0.00</td><td class="best">1.00±0.00</td><td class="best">1.00±0.00</td><td>0.74±0.06</td><td>0.48±0.07</td><td class="aler best">1.00±0.00</td></tr>
+  <tr><td>SkipNext + Invert</td><td>4</td><td>0.51±0.01</td><td class="best">1.00±0.00</td><td class="best">1.00±0.00</td><td class="best">1.00±0.00</td><td>0.65±0.08</td><td>0.53±0.00</td><td>0.56±0.02</td><td class="aler best">1.00±0.00</td></tr>
+  <tr><td>3 Invert + ResetRules</td><td>4</td><td>0.42±0.11</td><td>0.81±0.05</td><td class="best">0.99±0.00</td><td class="best">0.99±0.00</td><td>0.59±0.03</td><td>0.51±0.02</td><td>0.48±0.11</td><td class="aler best">0.99±0.00</td></tr>
+  <tr><td>RepeatPrev + SkipNext + Invert</td><td>10</td><td>0.41±0.10</td><td>0.83±0.02</td><td>0.92±0.08</td><td class="best">0.99±0.01</td><td>0.62±0.01</td><td>0.55±0.01</td><td>0.50±0.00</td><td class="aler best">0.99±0.01</td></tr>
+</table>
+</div>
+<p style="font-size:0.9em;color:var(--muted)">Success rate on 100 validation episodes, mean ± SEM over five training seeds. Q* is the number of target states that the composition requires. Bold marks the best mean in each row.</p>
+
+<div class="grid2">
+  <figure>
+    <img src="assets/generalization.png" alt="Horizon extrapolation">
+    <figcaption><b>Endless T-Maze horizon extrapolation.</b> Agents trained on 10 corridors of length 10 and evaluated on 10 corridors of lengths 10 to 100. ALER stays at 1.00 up to length 30, and PPO-LSTM falls below 0.5 at length 20.</figcaption>
+  </figure>
+  <div>
+    <h3 style="margin-top:20px">Rune MiniGrid Memory (pixels)</h3>
+    <div class="scroll">
+    <table>
+      <tr><th></th><th colspan="2">Fixed length</th><th colspan="2">Random length</th></tr>
+      <tr><th>Runes</th><th>PPO-LSTM</th><th class="aler">ALER</th><th>PPO-LSTM</th><th class="aler">ALER</th></tr>
+      <tr><td>I</td><td class="best">0.80±0.03</td><td class="aler">0.69±0.09</td><td>0.93±0.07</td><td class="aler best">0.94±0.06</td></tr>
+      <tr><td>N+I</td><td class="best">0.94±0.06</td><td class="aler">0.77±0.03</td><td>0.67±0.07</td><td class="aler best">0.92±0.08</td></tr>
+      <tr><td>S+I</td><td>0.51±0.03</td><td class="aler best">0.59±0.01</td><td>0.62±0.07</td><td class="aler best">0.63±0.05</td></tr>
+      <tr><td>3I+R</td><td>0.53±0.04</td><td class="aler best">0.57±0.01</td><td>0.53±0.01</td><td class="aler best">0.57±0.01</td></tr>
+      <tr><td>P+S+I</td><td>0.49±0.03</td><td class="aler best">0.60±0.00</td><td>0.56±0.00</td><td class="aler best">0.69±0.06</td></tr>
+    </table>
+    </div>
+    <p style="font-size:0.9em;color:var(--muted)">Mean ± SEM over three training seeds, 30M steps. I = Invert, N = NoOp, S = SkipNext, R = ResetRules, P = RepeatPrev. Both agents share the CNN encoder, LSTM size, and PPO settings.</p>
+  </div>
+</div>
+
+<h2>What ALER stores</h2>
+<p>Linear probes show that the learned memory follows the deferred solution. On Rune T-Maze with <code>RepeatPrev</code> + <code>SkipNext</code> + <code>Invert</code>, the slot memory decodes the initial cue and the recurrent state decodes the rune flags. In Endless T-Maze, the first observation of a new cue raises its decoding in memory from 0.52 before the write to 0.99 after it, so one write stores the new cue. Against constant gates with frozen weights, the learned gate has the highest mean success rate on all three probed tasks.</p>
+<figure>
+  <img src="assets/probes.png" alt="Probe balanced accuracy">
+  <figcaption><b>Linear probes on Rune T-Maze.</b> Balanced accuracy for the initial cue, the rune flags, and the required turn, decoded from each internal representation of ALER. Chance is 0.5.</figcaption>
+</figure>
+
+<h2>Citation</h2>
+<pre>@inproceedings{anonymous2027aler,
+  title     = {{ALER}: Adaptive Learnable Experience Rewriting for Reinforcement Learning},
+  author    = {Anonymous},
+  booktitle = {Submitted to the International Conference on Learning Representations},
+  year      = {2027}
+}</pre>
+
+<footer>Anonymous project page for double-blind review.</footer>
+</main>
+</body>
+</html>
